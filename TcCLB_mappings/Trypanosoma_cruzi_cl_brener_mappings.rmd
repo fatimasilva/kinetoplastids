@@ -23,6 +23,14 @@ This repository contains RefSeq and UniProtKB mappings to old and new IDs of *Tr
 
 * Tcruzi_CLB_UniProtKB_mappings_previousids.tsv: mappings between old TcCLB IDs and UniProtKB IDs.
 
+#### data folder
+
+* Tcruzi_CLB_previous_ids_eupathdb_20161202.json: previous ids mappings for Tcruzi CLB, downloaded from EuPathDB webservices (raw output)
+
+* Tcruzi_CLB_previous_ids_eupathdb_20161202_parsed.json: previous ids mappings for Tcruzi CLB, downloaded from EuPathDB webservices and parsed for loading into R (see Notes below)
+
+* Tcruzi_uniprot_mappings_20161128.tsv: raw download of the "GENES" field from UniProtKB, it includes gene names and Tcruzi CL Brener previous IDs.
+
 ### Notes
 
 Some notes on how the files in the data and tidy folders were generated:
@@ -49,7 +57,7 @@ select(up, keys = keys, columns = columnstcruzi, keytype = "UNIPROTKB")
 # Get all tcruzi genes
 tcruziuniprotids <- keys(up, "UNIPROTKB")
 tcruziuniprotmapping<- select(up, keys = tcruziuniprotids, columns = columnstcruzi, keytype = "UNIPROTKB")
-write.table(tcruziuniprotmapping, "./data/Tcruzi_uniprot_mappings_20161128", row.names = FALSE, quote = FALSE)
+write.table(tcruziuniprotmapping, "./data/Tcruzi_uniprot_mappings_20161128.tsv", row.names = FALSE, quote = FALSE, sep = "\t")
 
 ## Get tidy dataset (1 row per entry and only previousids)
 ### Unnest the GENES column
