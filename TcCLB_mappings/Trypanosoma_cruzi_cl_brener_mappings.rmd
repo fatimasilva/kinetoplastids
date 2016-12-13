@@ -1,0 +1,258 @@
+---
+title: "Trypanosoma cruzi CL Brener Refseq and UniProtKB mappings"
+output: html_document
+---
+
+This repository contains RefSeq and UniProtKB mappings to old and new IDs of *Trypanosoma cruzi CL Brener*
+
+### Contents
+
+#### tidy folder:
+
+* Tcruzi_CLB_current_to_previous_IDs_20161201.tsv: mappings between old IDs and new IDs of Tcruzi CLB (only the old IDs are in GenBank/UniProt)
+
+* Tcruzi_CLB_genenames_from_UniProtKB.tsv: list of annotated gene names in UniProtKB.
+
+* Tcruzi_CLB_previous_ids.tsv: list of old gene IDs.
+
+* Tcruzi_CLB_RefSeq_mappings_current_20161201.tsv: mappings between new TcCLB IDs and RefSeq IDs.
+
+* Tcruzi_CLB_RefSeq_mappings_previousids.tsv: mappings between old TcCLB IDs and RefSeq IDs.
+
+* Tcruzi_CLB_UniProtKB_mappings_current_20161201.tsv: mappings between new TcCLB IDs and UniProtKB IDs.
+
+* Tcruzi_CLB_UniProtKB_mappings_previousids.tsv: mappings between old TcCLB IDs and UniProtKB IDs.
+
+### Notes
+
+Some notes on how the files in the data and tidy folders were generated:
+
+Download the list of old IDs from UniProtKB. There are multiple gene IDs per row, parse to one gene ID per row
+```{r, eval = FALSE}
+# Set working directory and load required packages (internal)
+setwd("~/Working/eupathdb/eupathdb_current/project_chadodb/")
+library(dplyr)
+library(tidyr)
+library(data.table)
+```
+
+Get UniProtkKB IDs mapped to the previous IDs
+```{r, eval = FALSE}
+library(UniProt.ws)
+tcruzitaxonid <- as.integer("353153")
+up <- UniProt.ws(taxId=tcruzitaxonid)
+uniprotcolums <- columns(up)
+columnstcruzi <- c("UNIPROTKB","GENES") 
+keys <- c("Q9GT49")
+# Test with 1 ID
+select(up, keys = keys, columns = columnstcruzi, keytype = "UNIPROTKB")
+# Get all tcruzi genes
+tcruziuniprotids <- keys(up, "UNIPROTKB")
+tcruziuniprotmapping<- select(up, keys = tcruziuniprotids, columns = columnstcruzi, keytype = "UNIPROTKB")
+write.table(tcruziuniprotmapping, "./data/Tcruzi_uniprot_mappings_20161128", row.names = FALSE, quote = FALSE)
+
+## Get tidy dataset (1 row per entry and only previousids)
+### Unnest the GENES column
+tcruziuniprottest <- mutate(tcruziuniprotmapping, genenames = strsplit(as.character(GENES), ' '))
+tcruziuniprottest <- unnest(tcruziuniprottest)
+
+### Keep only the previous IDs (drop gene names) 
+### and keep only uniprotids and previousids columns
+tcruziuniprotmappingtidy <- filter(tcruziuniprottest, grepl("Tc00",
+                                        tcruziuniprottest$genenames, perl = TRUE))
+
+tcruziuniprotmappingtidy <- transmute(tcruziuniprotmappingtidy, 
+                                      previousids = genenames, uniprotids = UNIPROTKB)
+
+# Remove the occasional ';'
+tcruziuniprotmappingtidy$previousids <- gsub(";","", tcruziuniprotmappingtidy$previousids, fixed = TRUE)
+
+### Tcruzi genes that map to multiple uniprot ID? 0 => No, each gene has only 1 uniprot ID
+sum(duplicated(tcruziuniprotmappingtidy$previousids))
+
+### Uniprotids that map to several tcruzi genes? => 365
+sum(duplicated(tcruziuniprotmappingtidy$uniprotids))
+
+## Dump mappings UniProtKB:previousids
+write.table(tcruziuniprotmappingtidy, "./tidy/Tcruzi_CLB_UniProtKB_mappings_previousids.tsv", row.names = FALSE, quote = FALSE, sep = "\t")
+```
+
+Save a copy of the previous IDs too
+```{r, eval = FALSE}
+## Dump Tcruzi previous IDs
+
+write.table(tcruziuniprotmappingtidy$previousids,
+            "./tidy/Tcruzi_CLB_previous_ids.tsv",
+            row.names = FALSE, quote = FALSE, sep = "\t", col.names = "previousids")
+```
+
+Get also the gene names from UniProtKB, to check if they are loaded in TriTrypDB (check with case insensitive later)
+```{r, eval = FALSE}
+
+## Filter the gene names
+tcruziuniprotgenenamestidy <- filter(tcruziuniprottest, !(grepl("Tc00",
+                                        tcruziuniprottest$genenames, perl = TRUE)))
+tcruziuniprotgenenamestidy <- transmute(tcruziuniprotgenenamestidy,
+                                        uniprotids = UNIPROTKB, genenames = genenames)
+## Map to previous IDs and get rid of the UniProt IDs
+tcruziuniprotgenenamestidy <- merge(tcruziuniprotgenenamestidy, tcruziuniprotmappingtidy, by.x = "uniprotids", by.y = "uniprotids")
+
+tcruziuniprotgenenamestidy <- distinct(select(tcruziuniprotgenenamestidy, previousids, genenames))
+
+## Dump mappings
+write.table(tcruziuniprotgenenamestidy,
+            "./tidy/Tcruzi_CLB_genenames_from_UniProtKB.tsv", 
+            row.names = FALSE, quote = FALSE, sep = "\t")
+
+````
+
+Retrieve RefSeq mappings. Need a list of old Tcruzi IDs to get the RefSeq mappings, one ID per row
+```{r, eval = FALSE}
+
+# Load Previous IDs downloaded from UniProtKB 
+tcruzirefseqids <- read.csv("./tidy/Tcruzi_CLB_previous_ids.tsv", sep = "\t")
+
+library(rentrez)
+# inicialize vector to store IDs that were not found
+notfound <- vector(mode = "integer")
+
+# add column to store refseqs and uniprot ids
+tcruzirefseqids$refseqids <- rep(NA, length(tcruzirefseqids$previousids))
+for (i in 1:length(tcruzirefseqids$previousids)){ # test first with 10
+#for (i in 1:10){ # test first with 10 
+    
+    # term to search use the gene id and search in the locus_tag ([GENE])
+    term <- paste(tcruzirefseqids$previousids[[i]], "[GENE]" ,sep ="")
+    giid <- entrez_search(db="protein", term=term )
+    entrysummaries <- entrez_summary(db="protein", id=giid$ids )
+
+    # If the source database is "refseq" store the ID   
+    if (length(entrysummaries) != 31){ # Different class of object if 1 or proteins returned
+        for( j in 1:length(entrysummaries)){
+            if (entrysummaries[[j]]["sourcedb"] == "refseq"){
+                tcruzirefseqids$refseqids[i] <- entrysummaries[[j]]["caption"]
+            }
+        }
+
+    }else if(length(entrysummaries) == 31){ # Different class of object if 1 or proteins returned
+        
+        if (entrysummaries["sourcedb"] == "refseq"){
+            tcruzirefseqids$refseqids[i] <- entrysummaries["caption"]
+
+        }
+    }
+
+        
+    if(is.na(tcruzirefseqids$refseqids[i])){
+        notfound <- c(notfound, tcruzirefseqids$previousids[i])
+    }
+}
+# The loop creates lists in each refseqids entry, but there is only 1 value per entry (unlist)
+tcruzirefseqids$refseqids <- unlist(tcruzirefseqids$refseqids)
+
+# Dump mappings
+write.table(tcruzirefseqids, 
+            "./tidy/Tcruzi_CLB_RefSeq_mappings_previousids.tsv",
+            row.names = FALSE, quote = FALSE, sep = "\t")
+```
+
+Get mappings between current IDs and previous IDs from EuPathDB
+```{r, eval = FALSE}
+library(jsonlite)
+# download previous ids for Tcruzi CLB (EuPathDB webservices)
+fileUrl <- "http://tritrypdb.org/webservices/GeneQuestions/GenesByTaxon.json?organism=Trypanosoma%20cruzi%20CL%20Brener%20Esmeraldo-like,Trypanosoma%20cruzi%20CL%20Brener%20Non-Esmeraldo-like,Trypanosoma%20cruzi%20strain%20CL%20Brener&o-fields=gene_previous_ids"
+download.file(fileUrl, "./data/Tcruzi_CLB_previous_ids_eupathdb_20161202.json", method = "curl")
+
+# Parse JSON file, remove garbage at the beginning and end of the json data
+## (The pattern needs double escaped quotes in R)
+cmd <- as.character("perl -ne '$_ =~ s/^.+?(\\[.+\\])\\}\\}\\}$/\\1/; print $1;'fungidb_chado_loading/Fungal Genomes in Chado example_add_refseq_ids/data/Tcruzi_CLB_previous_ids_eupathdb_20161202.json > Tcruzi_CLB_previous_ids_eupathdb_20161202_parsed.json")
+
+system(cmd)
+
+# load JSON file and unnest data (nested in the fields column)
+tcruzidf <- fromJSON("./data/Tcruzi_CLB_previous_ids_eupathdb_20161202_parsed.json")
+tcruzidf <- unnest(tcruzidf, fields)
+tcruzidfpreviousids <- transmute(tcruzidf, geneid = id, 
+                                 previousid = strsplit(as.character(value), ' '))
+tcruzidfpreviousids <- unnest(tcruzidfpreviousids, previousid)
+
+# Filter only the previous IDs for Tc00xxxx genes 
+# use distintc to remove duplicate previous IDs (a lot in Tcruzi CLB)
+tcruzidfpreviousids <- distinct(filter(tcruzidfpreviousids, 
+                                        grepl("^Tc00\\.\\d+\\.\\d+,",
+                                        tcruzidfpreviousids$previousid, perl = TRUE)))
+
+# sanity check => number of row in the end ~> number of genes in TriTrypDB (25105/25099)
+tcruzidfpreviousids[which(duplicated(tcruzidfpreviousids$id)), ]
+# OK, a few new IDs map to multiple old IDs (merges of 2 old genes into one, for example)
+tcruzidfpreviousids[which(duplicated(tcruzidfpreviousids$previousid)), ]
+# Old IDs only map to 1 new ID (no duplicated entries in the previousid column)
+
+
+# Dump data
+write.table(tcruzidfpreviousids,
+            "./tidy/Tcruzi_CLB_current_to_previous_IDs_20161201.tsv",
+            row.names = FALSE, quote = FALSE, sep = "\t")
+```
+
+### Files for loading into GeneDB/TriTrypDB
+
+#### Tab file with UniProtKB IDs and new ID, one row per ID pair
+
+```{r, eval =FALSE}
+# merge UniProtKB mappings and Tcruzi old to new mappings
+# Each Tcruzi previousid has only 1 UniProt ID and 1 new Tcruzi ID
+tcruziuniprotnewids <- merge(tcruziuniprotmappingtidy, 
+                             tcruzidfpreviousids, by.x = "previousids", by.y = "previousid")
+
+tcruziuniprotnewids <- transmute(tcruziuniprotnewids, geneids = id, uniprotids = uniprotids)
+write.table(tcruziuniprotnewids,
+            "./tidy/Tcruzi_CLB_UniProtKB_mappings_current_20161201.tsv",
+            row.names = FALSE, quote = FALSE, sep = "\t")
+```
+
+#### Tab file with RefSeq IDs and new IDs, one row per ID pair
+
+```{r, eval = FALSE}
+# merge RefSeq IDs mappings and Tcruzi old to new mappings
+tcruzirefseqnewids <- merge(tcruzirefseqids, tcruzidfpreviousids,
+                            by.x = "previousids", by.y = "previousid")
+tcruzirefseqnewids <- transmute(tcruzirefseqnewids, geneids = id, refseqids = refseqids)
+
+## Remove rows with no refseq reference associated
+tcruzirefseqnewids <-  tcruzirefseqnewids[which(!is.na(tcruzirefseqnewids$refseqids)), ]
+
+write.table(tcruzirefseqnewids,
+            "./tidy/Tcruzi_CLB_RefSeq_mappings_current_20161201.tsv",
+            row.names = FALSE, quote = FALSE, sep = "\t")
+```
+
+### Script for loading dbxrefs into Chado
+
+* [Add dbxrefs to polypeptide features]("./scripts/chado_add_protein_dbxrefs.pl")
+
+    sanger working directory: "chado_scripts/example_add_refseq_ids"
+
+### GeneDB's Chado
+
+There is no db entry in Chado for RefSeq IDs:
+```
+PATHOGENS> insert into db (name,description,urlprefix) VALUES ('RefSeq','NCBI Reference Sequences','https://www.ncbi.nlm.nih.gov/protein/');
+```
+* db_id for RefSeq = 406
+
+* db_id for UniProKB = 67
+
+## References
+
+#### UniProtKB R Package:
+
+[UniProt.ws Bioconductor](https://www.bioconductor.org/packages/release/bioc/html/UniProt.ws.html)
+
+#### Example scripts for loading (internal):
+
+* [script to load pathway ids](~/Working/sanger/TriTrypDB_metabolic_pathways_links/chado_add_TriTrypDB_metabolic_path_links.pl)
+
+* [script to load UniProtKB IDs, with code to map old IDs](~/Working/sanger/Tb927_adding_UniProtKB_IDs/chado_add_UniProtKB_ids.pl)
+
+* [Recent script for loading GO terms, with support for alternative transcripts](~/Working/sanger/adding_GO_terms/TrypTag_Data/chado_adding_list_of_GO_terms_alternative_CDSs.pl)
